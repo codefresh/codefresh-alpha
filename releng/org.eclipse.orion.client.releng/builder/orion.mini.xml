@@ -1,0 +1,366 @@
+<project name="WebIDERequireJS customTargets overrides" >
+	<!--
+	Required properties
+	======================================================================
+		${builder}           Path to the org.eclipse.orion.client/releng/builder/ folder
+		${requireJsHome}     Path to the folder where r.js can be found. Must also contain a ./lib/ 
+		                       subfolder containing jars for Closure and Rhino.
+		${buildConfig}       Path to the RequireJS build config file for the product (eg. orion.build.js).
+		${buildDirectory}    Path to the directory where build will be performed.
+		${orionClient}       Path to the orion client repo. Optimized Orion page code is copied back into here.
+
+	Optional properties
+	======================================================================
+		${skipOrionUI}      If set, the Orion pages and plugins will not be built
+		${skipBrowser}      If set, the readonly file browser widget will not be generated 
+		${skipEditor}       If set, the standalone editor will not be generated
+		${skipEditorStylers}       If set, the standalone editor stylers will not be generated
+		${skipCompareEditor}       If set, the standalone compare editor will not be generated
+	-->
+
+	<property name="super" value="Build specific targets and properties" />
+	<property name="widgetOutDirectory" value="${buildDirectory}/built-js" />
+	<property name="staging" value="${buildDirectory}/staging" />
+	<property name="optimized" value="${buildDirectory}/optimized" />
+
+    <target name="download3rdPartyLibs">
+        <mkdir dir="${requirejsHome}" />
+        <get src="http://requirejs.org/docs/release/2.1.6/r.js"
+             dest="${requirejsHome}/r.js"
+             usetimestamp="true"
+             maxtime="30" />
+    </target>
+
+	<target name="updateBuildLabel" if="buildLabel">
+	    <echo message="Updating build label..."/>
+		<replace dir="${buildDirectory}" includes="pluginVersions.properties,featureVersions.properties"  >
+			<replacefilter token="HEAD" value="${buildLabel}" />
+			<replacefilter token="origin/master" value="${buildLabel}" />
+		</replace>
+		<!-- Build Id in Orion page footer -->
+		<replace dir="${buildDirectory}" includes="**/web/orion/nls/root/messages.js"  >
+			<replacefilter token="@buildLabel@" value="${buildLabel}" />
+		</replace>
+	</target>
+
+	<scriptdef name="stageBundles" language="javascript" src="${builder}/scripts/stageBundles.js">
+		<attribute name="buildfile" />
+		<attribute name="todir" />
+	</scriptdef>
+
+	<scriptdef name="copyBackBundles" language="javascript" src="${builder}/scripts/copyBackBundles.js">
+		<attribute name="buildfile" />
+		<attribute name="out" />
+	</scriptdef>
+
+	<!-- Copy the optimized files for bundle @{bundle} from the output folder @{out} back into the bundle. --> 
+	<target name="copybackBundle">
+		<!-- params: bundle, out -->
+		<property name="bundle.fullpath" location="${bundle}" />
+		<property name="out.fullpath" location="${out}" />
+
+		<!-- For each JS file in this bundle we need 3 optimized files: {foo}.js, {foo}.js.map, {foo}.js.src
+		We build the list of JS files from ${bundle}, but the actual optimized files are in ${out}. So we
+		construct a set of relative paths to the optimized files, which we can apply against ${out} later.
+		-->
+		<pathconvert property="optimized.paths" pathsep=",">
+			<fileset dir="${bundle.fullpath}">
+				<include name="**/*.js" />
+				<exclude name="**/node_modules/" />
+			</fileset>
+			<chainedmapper>
+				<!-- strip off leading bundle/web/ to get relative path -->
+				<globmapper from="${bundle.fullpath}/*" to="*" handledirsep="true" />
+				<compositemapper>
+					<identitymapper />
+					<globmapper from="*" to="*.map" />
+					<globmapper from="*" to="*.src" />
+				</compositemapper>
+			</chainedmapper>
+		</pathconvert>
+
+		<!-- Evaluate the relative paths against @{out} and copy the resulting files back into our bundle folder. -->
+		<copy todir="${bundle}">
+			<!-- TODO: this breaks if a filename contains comma or space -->
+			<fileset dir="${out}" includes="${optimized.paths}" />
+		</copy>
+	</target>
+
+	<!-- Replaces any references to the unminified `require.js` with the minified `require.min.js` in the bundles -->
+	<scriptdef name="updateRequire" language="javascript" src="${builder}/scripts/updateRequire.js">
+		<attribute name="buildfile" />
+	</scriptdef>
+
+	<target name="orionOptimize" unless="skipOrionUI">
+		<!-- $staging: Input folder for r.js -->
+		<!-- $out:     Output folder of r.js -->
+		<!-- $buildfile: r.js build config -->
+		<sequential>
+			<echo message="Building Orion pages and plugins..."/>
+			<java classname="org.mozilla.javascript.tools.shell.Main" fork="true" dir="${staging}" failonerror="true">
+				<classpath>
+					<sort>
+						<fileset dir="${requirejsHome}/lib/">
+							<include name="**/*.jar"/>
+						</fileset>
+					</sort>
+				</classpath>
+				<jvmarg value="-Xss1024k" />
+				<arg value="-version" />
+				<arg value="180" />
+				<arg value="${requirejsHome}/r.js"/>
+				<arg value="-o" />
+				<arg value="${buildfile}"/>
+				<!-- <arg value="optimize=closure" /> -->
+				<arg value="appDir=${staging}" />
+				<arg value="baseUrl=./" />
+				<arg value="dir=${out}" />
+			</java>
+
+			<copyBackBundles buildfile="${buildfile}" out="${out}" />
+			<updateRequire buildfile="${buildfile}" />
+		</sequential>
+	</target>
+
+	<target name="widget.check">
+		<condition property="widget.run">
+			<or>
+				<not><isset property="skipBrowser" /></not>
+				<not><isset property="skipEditor" /></not>
+				<not><isset property="skipCompareEditor" /></not>
+			</or>
+		</condition>
+	</target>
+
+	<!-- Clean widget output directory -->
+	<target name="widgetClean" depends="widget.check" if="widget.run">
+		<delete dir="${widgetOutDirectory}" />
+		<mkdir dir="${widgetOutDirectory}" />
+
+		<!--
+			Copy editor build files to ${staging} to make editorOptimize simpler. cssIn paths must be 
+			relative to the build file location, and having build file location == ${staging} is easier.
+		-->
+		<copy file="${builder}/scripts/editor.build-css.js" tofile="${staging}/editor.build-css.js" overwrite="true"/>
+		<copy file="${builder}/scripts/editor.build-js.js" tofile="${staging}/editor.build-js.js" overwrite="true"/>
+		<copy file="${builder}/scripts/editor.build.almond-js.js" tofile="${staging}/editor.build.almond-js.js" overwrite="true"/>
+		<copy file="${builder}/scripts/compare.build-css.js" tofile="${staging}/compare.build-css.js" overwrite="true"/>
+		<copy file="${builder}/scripts/compare.build-js.js" tofile="${staging}/compare.build-js.js" overwrite="true"/>
+		<copy file="${builder}/scripts/compare.build.almond-js.js" tofile="${staging}/compare.build.almond-js.js" overwrite="true"/>
+		<copy file="${builder}/scripts/browse.build-css.js" tofile="${staging}/browse.build-css.js" overwrite="true"/>
+		<copy file="${builder}/scripts/browse.build.almond-js.js" tofile="${staging}/browse.build.almond-js.js" overwrite="true"/>
+		<copy file="${builder}/scripts/editor.build.stylers-js.js" tofile="${staging}/editor.build.stylers-js.js" overwrite="true"/>
+	</target>
+	
+	<target name="editorStylersOptimize" unless="skipEditorStylers">
+		<stylerOptimizeFile out="${out}/stylers/text_x-yaml/syntax.min.js"
+			name="orion/editor/stylers/text_x-yaml/syntax"
+			optimize="closure"
+			staging="${staging}" />
+		<stylerOptimizeFile out="${out}/stylers/text_x-yaml/syntax.js"
+			name="orion/editor/stylers/text_x-yaml/syntax"
+			optimize="none"
+			staging="${staging}" />
+	</target>
+
+	<target name="editorOptimize" unless="skipEditor">
+		<sequential>
+			<antcall target="editorStylersOptimize"/>
+			
+			<widgetOptimizeFile out="${out}/built-editor.css"
+				buildfile="${staging}/editor.build-css.js"
+				optimize="closure"
+				staging="${staging}" />
+			<widgetOptimizeFile out="${out}/built-editor-amd.min.js"
+				buildfile="${staging}/editor.build-js.js"
+				optimize="closure"
+				staging="${staging}" />
+			<widgetOptimizeFile out="${out}/built-editor-amd.js"
+				buildfile="${staging}/editor.build-js.js"
+				optimize="none"
+				staging="${staging}" />
+			<widgetOptimizeFile out="${out}/built-editor.min.js"
+				buildfile="${staging}/editor.build.almond-js.js"
+				optimize="closure"
+				staging="${staging}" />
+			<widgetOptimizeFile out="${out}/built-editor.js"
+				buildfile="${staging}/editor.build.almond-js.js"
+				optimize="none"
+				staging="${staging}" />
+			<zip destFile="${out}/built-editor.zip" basedir="${out}" includes="built-editor.css, built-editor-amd.min.js, built-editor-amd.js, built-editor.min.js, built-editor.js, stylers/**/*" />
+		</sequential>
+	</target>
+				
+	<target name="compareOptimize" unless="skipCompareEditor">
+		<sequential>
+			<widgetOptimizeFile out="${out}/built-compare.css"
+				buildfile="${staging}/compare.build-css.js"
+				optimize="closure"
+				staging="${staging}" />
+			<widgetOptimizeFile out="${out}/built-compare-amd.min.js"
+				buildfile="${staging}/compare.build-js.js"
+				optimize="closure"
+				staging="${staging}" />
+			<widgetOptimizeFile out="${out}/built-compare-amd.js"
+				buildfile="${staging}/compare.build-js.js"
+				optimize="none"
+				staging="${staging}" />
+			<widgetOptimizeFile out="${out}/built-compare.min.js"
+				buildfile="${staging}/compare.build.almond-js.js"
+				optimize="closure"
+				staging="${staging}" />
+			<widgetOptimizeFile out="${out}/built-compare.js"
+				buildfile="${staging}/compare.build.almond-js.js"
+				optimize="none"
+				staging="${staging}" />
+			<copy todir= "${out}" >
+				<fileset dir="${orionClient}/bundles/org.eclipse.orion.client.ui/web/font"  includes="OrionIconFont-Regular.eot, OrionIconFont-Regular.woff, OrionIconFont-Regular.ttf, OrionIconFont-Regular.svg"/>
+			</copy>
+			<zip destFile="${out}/built-compare.zip" basedir="${out}" includes="built-compare.css, built-compare-amd.min.js, built-compare-amd.js, built-compare.min.js, built-compare.js, OrionIconFont-Regular.eot, OrionIconFont-Regular.woff, OrionIconFont-Regular.ttf, OrionIconFont-Regular.svg" />
+		</sequential>
+	</target>
+
+	<target name="browserOptimize" unless="skipBrowser">
+		<sequential>
+			<widgetOptimizeFile out="${out}/built-browser.css"
+				buildfile="${staging}/browse.build-css.js"
+				optimize="closure"
+				staging="${staging}" />
+			<widgetOptimizeFile out="${out}/built-browser.min.js"
+				buildfile="${staging}/browse.build.almond-js.js"
+				optimize="closure"
+				staging="${staging}" />
+			<widgetOptimizeFile out="${out}/built-browser.js"
+				buildfile="${staging}/browse.build.almond-js.js"
+				optimize="none"
+				staging="${staging}" />
+			<copy todir="${orionClient}/bundles/org.eclipse.orion.client.ui/web/browse/built" >
+				<fileset dir="${out}" includes="built-browser.js, built-browser.css, built-browser.min.js"/>
+			</copy>
+		</sequential>
+	</target>
+	
+	<macrodef name="widgetOptimizeFile">
+		<attribute name="staging" />
+		<attribute name="buildfile" />
+		<attribute name="out" />
+		<attribute name="optimize" />
+		<sequential>
+			<java classname="org.mozilla.javascript.tools.shell.Main" fork="true" dir="@{staging}" failonerror="true">
+				<classpath>
+					<sort>
+						<fileset dir="${requirejsHome}/lib/">
+							<include name="**/*.jar"/>
+						</fileset>
+					</sort>
+				</classpath>
+				<!-- JavaScript language version -->
+				<arg value="-version" />
+				<arg value="180" />
+				<arg value="${requirejsHome}/r.js"/>
+				<arg value="-o" />
+				<arg value="@{buildfile}"/>
+				<arg value="optimize=@{optimize}" />
+				<arg value="out=@{out}"/>
+				<arg value="dir=" />
+			</java>
+		</sequential>
+	</macrodef>
+	
+	<macrodef name="stylerOptimizeFile">
+		<attribute name="staging" />
+		<attribute name="out" />
+		<attribute name="name" />
+		<attribute name="optimize" />
+		<sequential>
+			<java classname="org.mozilla.javascript.tools.shell.Main" fork="true" dir="@{staging}" failonerror="true">
+				<classpath>
+					<sort>
+						<fileset dir="${requirejsHome}/lib/">
+							<include name="**/*.jar"/>
+						</fileset>
+					</sort>
+				</classpath>
+				<!-- JavaScript language version -->
+				<arg value="-version" />
+				<arg value="180" />
+				<arg value="${requirejsHome}/r.js"/>
+				<arg value="-o" />
+				<arg value="@{staging}/editor.build.stylers-js.js"/>
+				<arg value="optimize=@{optimize}" />
+				<arg value="name=@{name}"/>
+				<arg value="out=@{out}"/>
+				<arg value="dir=" />
+			</java>
+		</sequential>
+	</macrodef>
+
+	<!-- These 3 tasks are just for conditionally removing existing ${staging} and ${optimized} -->
+	<target name="checkDirs">
+		<available file="${staging}"   type="dir" property="staging.exists" />
+		<available file="${optimized}" type="dir" property="optimized.exists" />
+	</target>
+	<target name="cleanStaging" if="staging.exists">
+		<echo message="Removing ${staging}" />
+		<delete>
+			<fileset dir="${staging}" />
+		</delete>
+	</target>
+	<target name="cleanOptimized" if="optimized.exists">
+		<echo message="Removing ${optimized}" />
+		<delete>
+			<fileset dir="${optimized}" />
+		</delete>
+	</target>
+
+	<target name="requirejs" depends="checkDirs, cleanStaging, cleanOptimized">
+	    <echo message="requirejs build started..."/>
+
+		<mkdir dir="${staging}" />
+		<mkdir dir="${optimized}" />
+		<antcall target="widgetClean">
+			<param name="staging" value="${staging}" />
+		</antcall>
+
+		<!-- Stage files for optimization -->
+		<stageBundles todir="${staging}" buildfile="${buildConfig}" />
+
+		<!-- build Orion pages and plugins (unless skipOrionUI is set) -->
+		<antcall target="orionOptimize">
+			<param name="staging" value="${staging}" />
+			<param name="out" value="${optimized}" />
+			<param name="buildfile" value="${buildConfig}" />
+		</antcall>
+
+		<!-- build readonly widget (unless skipBrowser is set) -->
+		<antcall target="browserOptimize">
+			<param name="staging" value="${staging}" />
+			<param name="out" value="${widgetOutDirectory}" />
+		</antcall>
+
+		<!-- build standalone editor (unless skipEditor is set) -->
+		<antcall target="editorOptimize">
+			<param name="staging" value="${staging}" />
+			<param name="out" value="${widgetOutDirectory}" />
+		</antcall>
+
+		<!-- build standalone compare editor (unless skipCompareEditor is set) -->
+		<antcall target="compareOptimize">
+			<param name="staging" value="${staging}" />
+			<param name="out" value="${widgetOutDirectory}" />
+		</antcall>
+
+		<!-- copy css back -->
+		<!-- TODO! this should be done automatically using the ${buildConfig} -->
+		<copy todir="${orionClient}/bundles/org.eclipse.orion.client.ui/web" >
+			<fileset dir="${optimized}" includes="**/*.css" excludes="git/,profile/"/>
+		</copy>
+		<copy todir="${orionClient}/bundles/org.eclipse.orion.client.git/web" >
+			<fileset dir="${optimized}" includes="git/**/*.css" />
+		</copy>
+		<copy todir="${orionClient}/bundles/org.eclipse.orion.client.users/web" >
+			<fileset dir="${optimized}" includes="profile/**/*.css" />
+		</copy>
+	</target>
+
+</project>

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>JavaScript Tools Mocha Tests</title>
+  <link rel="stylesheet" href="../../../../mocha/mocha.css" />
+  <script src="../../../../requirejs/require.js"></script>
+  <script>
+	/*eslint-env amd*/
+	require({
+		baseUrl: '../../',
+		paths: {
+			text: 'requirejs/text',
+			i18n: 'requirejs/i18n',
+			domReady: 'requirejs/domReady',
+			estraverse: 'estraverse/estraverse',
+			esprima: 'esprima/esprima',
+			escope: 'escope/escope',
+			'eslint/tests': 'eslint/tests'
+		},
+		packages: [
+			{
+				name: "eslint",
+				location: "eslint/lib",
+				main: "eslint"
+			},
+			{
+				name: "eslint/conf",
+				main: "eslint/conf"
+			}
+		],
+	});
+	require(['mocha/sauce'], function(mocha) {
+		mocha.setup('bdd');
+		require([
+				'eslint/tests/load-tests',
+				'js-tests/javascript/astManagerTests',
+				'js-tests/javascript/contentAssistTests',
+				'js-tests/javascript/esprimaTolerantTests',
+				'js-tests/javascript/finderTests',
+				'js-tests/javascript/indexFileParsingTests',
+				'js-tests/javascript/occurrencesTests',
+				'js-tests/javascript/outlinerTests'
+				], function(){
+			mocha.run();
+		});
+	});
+  </script>
+</head>
+<body>
+	<div id="mocha">
+		<h1>JavaScript Tools Tests</h1>
+	</div>
+</body>
+</html>

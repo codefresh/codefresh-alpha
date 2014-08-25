@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+	<meta name="copyright" content="Copyright (c) IBM Corporation and others 2013." >
+	<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+	<script src="../../requirejs/require.js"></script>
+	<script type="text/javascript">
+		/*global require define*/
+		require({
+		  baseUrl: '../../',
+		  // set the paths to our library packages
+		  packages: [],
+		  paths: {
+		    text: 'requirejs/text',
+		    i18n: 'requirejs/i18n',
+		    domReady: 'requirejs/domReady'
+		  }
+		});
+
+		require(["cfui/plugins/cFDeployService", "../../orion/plugin.js"], function(cFDeployService, PluginProvider){
+			var deployService = new cFDeployService.DeployService();
+			
+			var headers = {
+				name: "Cloud Foundry Deploy",
+				version: "1.0",
+				description: "This plugin integrates with Cloud Foundry."
+			};
+		
+			var provider = new PluginProvider(headers);
+			
+			provider.registerServiceProvider("orion.project.deploy",
+				deployService,
+				{
+					name: "Deploy to Cloud Foundry",
+					id: "org.eclipse.orion.client.cf.deploy",
+					deployTypes: ["Cloud Foundry"],
+					tooltip: "Deploy application in cloud.",
+					validationProperties: [{source: "NoShow" }],
+					logLocationTemplate: "{+OrionHome}/cfui/logs.html#{Name,Target*}",
+					priorityForDefault: 9
+				});
+				
+			provider.connect();
+		});
+		</script>
+</head>
+<body>
+</body>
+</html>
